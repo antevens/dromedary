@@ -9,7 +9,7 @@ class VeloTimer():
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
         sensor.set_pixformat(sensor.GRAYSCALE) # Set pixel format
-        sensor.set_framesize(sensor.QQVGA)  # Set frame size
+        sensor.set_framesize(sensor.QQQVGA)  # Set frame size
         sensor.set_auto_exposure(True, exposure_us=5000) # Smaller means faster
         sensor.skip_frames(time = 2000)     # Wait for settings take effect
 
@@ -33,7 +33,7 @@ class VeloTimer():
         # Schedule async LCD shield updates
         self.render_ref = self.render  # Allocation occurs here
         tim = pyb.Timer(4)
-        tim.init(freq=2)
+        tim.init(freq=20)
         tim.callback(self.cb)
 
     def cb(self, timer):
