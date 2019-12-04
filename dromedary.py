@@ -5,7 +5,7 @@ import sensor, image, time, lcd, pyb, micropython
 
 
 class VeloTimer():
-    def __init__(self):
+    def __init__(self, draw_stats=False):
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
         sensor.set_pixformat(sensor.GRAYSCALE) # Set pixel format
@@ -24,17 +24,35 @@ class VeloTimer():
 
         # Set line finding parameters
         self.min_degree = 45
-        self.max_degree = 134
-        self.threshold = 1000
+        self.max_degree = 135
+        self.threshold = 2000
         self.theta_margin = 25
         self.rho_margin = 25
         self.color = (255, 0, 0)
 
         # Schedule async LCD shield updates
-        self.render_ref = self.render  # Allocation occurs here
-        tim = pyb.Timer(4)
-        tim.init(freq=20)
-        tim.callback(self.cb)
+        micropython.alloc_emergency_exception_buf(100) # Debugging only
+        self.render_ref = self.render # Allocation occurs here
+        self.tim = pyb.Timer(4) # Assign timer 5
+        self.tim.init(freq=10) # Set LCD shield update freq. to 20hz
+        self.tim.callback(self.cb)
+
+        # Show performance statistics
+        self.draw_stats=draw_stats
+        self._fps = None
+
+    def __del__(self):
+        """ Clean up timers """
+        self.tim.deinit()
+
+    def draw_fps(self, img=None):
+        img = img or self.img
+        if self._fps:
+            img.draw_string(0,0, "{:03.0f}fps".format(self._fps))
+
+    def draw_exposure(self, img=None):
+         img = img or self.img
+         img.draw_string(0,50, "{:03d}ms".format(timer.get_exposure()))
 
     def cb(self, timer):
         """ Callback event handler for rendering to the LCD async """
@@ -42,27 +60,37 @@ class VeloTimer():
 
     def snapshot(self):
         """ Takes a snapshot from the image sensor """
+        self.clock.tick() # Update the FPS clock.
         self.img = sensor.snapshot()
+        self._fps = self.clock.fps()
 
     def render(self, timer, img=None):
         """ Renders an image to the LCD shield """
         img = img or self.img
+        if self.draw_stats:
+            img = img.copy()
+            self.draw_fps(img)
+            self.draw_exposure(img)
         lcd.display(img)
+
+    def get_exposure(self):
+        return sensor.__read_reg(0xBB)
+
 
     def find_lines(self, img=None):
         """ Finds lines in images """
         img = img or self.img
-        for line in img.find_lines(threshold = self.threshold,
-                                   theta_margin = self.theta_margin,
-                                   rho_margin = self.rho_margin):
+        for line in img.find_lines(threshold=self.threshold,
+                                   x_stride=10,
+                                   y_stride=4,
+                                   theta_margin=self.theta_margin,
+                                   rho_margin=self.rho_margin):
             if (self.min_degree <= line.theta()) and (line.theta() <= self.max_degree):
-                img.draw_line(l.line(), color = self.color)
-                #print(l)
+                img.draw_line(line.line(), color = self.color)
+                print(line)
 
 
-timer = VeloTimer()
+timer = VeloTimer(draw_stats=True)
 while(True):
-    timer.clock.tick() # Update the FPS clock.
     timer.snapshot() # Take a picture store
-    #timer.render()  # 25hz
-    print(timer.clock.fps(), sensor.__read_reg(0xBB))
+    timer.find_lines()
