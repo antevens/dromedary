@@ -1,11 +1,17 @@
 # Velodrome marking/line sensor
 import sensor, image, time, lcd, pyb, micropython
 
-
-
-
 class VeloTimer():
-    def __init__(self, draw_stats=False):
+    """ Primary class to find lines and send signals """
+    def __init__(self, draw_stats=False, draw_lines=False):
+
+        # Setup hardware
+        self.red_led = pyb.LED(1)
+        self.green_led = pyb.LED(2)
+        self.blue_led = pyb.LED(3)
+        self.infra_led = pyb.LED(4)
+        self.usb_serial = pyb.USB_VCP() # Serial Port
+
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
         sensor.set_pixformat(sensor.GRAYSCALE) # Set pixel format
@@ -28,7 +34,7 @@ class VeloTimer():
         self.threshold = 2000
         self.theta_margin = 25
         self.rho_margin = 25
-        self.color = (255, 0, 0)
+
 
         # Schedule async LCD shield updates
         micropython.alloc_emergency_exception_buf(100) # Debugging only
@@ -37,9 +43,15 @@ class VeloTimer():
         self.tim.init(freq=10) # Set LCD shield update freq. to 20hz
         self.tim.callback(self.cb)
 
-        # Show performance statistics
-        self.draw_stats=draw_stats
+        # Show performance/debug statistics/info
+        self.draw_stats = draw_stats
+        self.draw_lines = draw_lines
+        self.line_draw_color = (255, 0, 0)
         self._fps = None
+
+        # Store last known lines
+        self._lines = self.find_lines()
+
 
     def __del__(self):
         """ Clean up timers """
@@ -49,10 +61,12 @@ class VeloTimer():
         img = img or self.img
         if self._fps:
             img.draw_string(0,0, "{:03.0f}fps".format(self._fps))
+        return img
 
     def draw_exposure(self, img=None):
          img = img or self.img
-         img.draw_string(0,50, "{:03d}ms".format(timer.get_exposure()))
+         img.draw_string(0,50, "{:03d}el".format(self.get_exposure()))
+         return img
 
     def cb(self, timer):
         """ Callback event handler for rendering to the LCD async """
@@ -63,6 +77,7 @@ class VeloTimer():
         self.clock.tick() # Update the FPS clock.
         self.img = sensor.snapshot()
         self._fps = self.clock.fps()
+        return self.img
 
     def render(self, timer, img=None):
         """ Renders an image to the LCD shield """
@@ -71,24 +86,30 @@ class VeloTimer():
             img = img.copy()
             self.draw_fps(img)
             self.draw_exposure(img)
+            print(self._fps, self.get_exposure())
+        if self.draw_lines:
+            for line in self._lines:
+                if (self.min_degree <= line.theta()) and (line.theta() <= self.max_degree):
+                    img.draw_line(line.line(), color = self.line_draw_color)
+                    print(line)
         lcd.display(img)
 
-    def get_exposure(self):
+    def get_exposure_lines(self):
         return sensor.__read_reg(0xBB)
-
 
     def find_lines(self, img=None):
         """ Finds lines in images """
         img = img or self.img
-        for line in img.find_lines(threshold=self.threshold,
-                                   x_stride=10,
-                                   y_stride=4,
-                                   theta_margin=self.theta_margin,
-                                   rho_margin=self.rho_margin):
-            if (self.min_degree <= line.theta()) and (line.theta() <= self.max_degree):
-                img.draw_line(line.line(), color = self.color)
-                print(line)
+        lines = img.find_lines(threshold=self.threshold,
+                               x_stride=8,
+                               y_stride=4,
+                               theta_margin=self.theta_margin,
+                               rho_margin=self.rho_margin)
+        if lines:
+            self.red_led.toggle()
+            self._lines = lines
 
+        return lines
 
 timer = VeloTimer(draw_stats=True)
 while(True):
