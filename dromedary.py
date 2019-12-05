@@ -1,8 +1,13 @@
 # Velodrome marking/line sensor
-import sensor, image, time, lcd, pyb, micropython
+import sensor, image, time, lcd, pyb, micropython, ulab
 
 class VeloTimer():
-    """ Primary class to find lines and send signals """
+    """
+    Primary class to find lines and send signals
+
+    See documentation for the imaging sensor:
+    https://github.com/antevens/dromedary/blob/master/documents/MT9V034.pdf
+    """
     def __init__(self, draw_stats=False, draw_lines=False):
 
         # Setup hardware
@@ -11,6 +16,9 @@ class VeloTimer():
         self.blue_led = pyb.LED(3)
         self.infra_led = pyb.LED(4)
         self.usb_serial = pyb.USB_VCP() # Serial Port
+
+        # Delta value in pixels for x/y for tracking new lines
+        self.line_id_max_delta = 10
 
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
@@ -32,8 +40,8 @@ class VeloTimer():
         self.min_degree = 45
         self.max_degree = 135
         self.threshold = 2000
-        self.theta_margin = 25
-        self.rho_margin = 25
+        self.theta_margin = 100 #25
+        self.rho_margin = 100 #25
 
 
         # Schedule async LCD shield updates
@@ -65,7 +73,7 @@ class VeloTimer():
 
     def draw_exposure(self, img=None):
          img = img or self.img
-         img.draw_string(0,50, "{:03d}el".format(self.get_exposure()))
+         img.draw_string(0,50, "{:03d}el".format(self.get_exposure_lines()))
          return img
 
     def cb(self, timer):
@@ -83,35 +91,85 @@ class VeloTimer():
         """ Renders an image to the LCD shield """
         img = img or self.img
         if self.draw_stats:
-            img = img.copy()
+            img = img.to_rgb565(copy=True)
             self.draw_fps(img)
             self.draw_exposure(img)
-            print(self._fps, self.get_exposure())
+            #print(self._fps, self.get_exposure_lines())
         if self.draw_lines:
             for line in self._lines:
-                if (self.min_degree <= line.theta()) and (line.theta() <= self.max_degree):
-                    img.draw_line(line.line(), color = self.line_draw_color)
-                    print(line)
+                img.draw_line(line.line(), color = self.line_draw_color)
         lcd.display(img)
 
     def get_exposure_lines(self):
+        """
+        The exposure measured in row-time from 1 to 2047.
+        """
         return sensor.__read_reg(0xBB)
 
-    def find_lines(self, img=None):
-        """ Finds lines in images """
+
+    def get_gain(self):
+        """
+        The gain measured in gain-units. The gain range is 16 to 63
+        (unity gain = 16 gain-units; multiply by 1/16 to get the true
+        gain).
+        """
+        return sensor.__read_reg(0xBA)
+
+    def find_lines(self, img=None, min_degree=None, max_degree=None):
+        """
+        Finds lines in images
+
+        `threshold` controls how many lines in the image are found. Only lines with
+        edge difference magnitude sums greater than `threshold` are detected...
+
+        More about `threshold` - each pixel in the image contributes a magnitude value
+        to a line. The sum of all contributions is the magintude for that line. Then
+        when lines are merged their magnitudes are added togheter. Note that `threshold`
+        filters out lines with low magnitudes before merging. To see the magnitude of
+        un-merged lines set `theta_margin` and `rho_margin` to 0...
+
+        `theta_margin` and `rho_margin` control merging similar lines. If two lines
+        theta and rho value differences are less than the margins then they are merged.
+
+
+        All line objects have a `theta()` method to get their rotation angle in degrees.
+        You can filter lines based on their rotation angle.
+
+        """
+
         img = img or self.img
-        lines = img.find_lines(threshold=self.threshold,
+        all_lines = img.find_lines(threshold=self.threshold,
                                x_stride=8,
                                y_stride=4,
                                theta_margin=self.theta_margin,
                                rho_margin=self.rho_margin)
-        if lines:
+
+        filtered_lines = []
+        for line in all_lines:
+            if self.min_degree and line.theta() < self.min_degree:
+                continue
+            if self.max_degree and line.theta() > self.max_degree:
+                continue
+            filtered_lines.append(line)
             self.red_led.toggle()
-            self._lines = lines
 
-        return lines
+            for existing_line in self._lines:
+               delta_array = ulab.array(line.line()) - ulab.array(existing_line.line())
+               for delta in delta_array:
+                  if abs(delta) > self.line_id_max_delta:
+                      print("New line")
+                      break
+               else:
+                   print("Same line")
+                   break
+            else:
+                print("Newer Line")
 
-timer = VeloTimer(draw_stats=True)
+
+        self._lines = filtered_lines
+        return filtered_lines
+
+timer = VeloTimer(draw_stats=True, draw_lines=True)
 while(True):
     timer.snapshot() # Take a picture store
     timer.find_lines()
