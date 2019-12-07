@@ -17,8 +17,21 @@ class VeloTimer():
         self.infra_led = pyb.LED(4)
         self.usb_serial = pyb.USB_VCP() # Serial Port
 
+        # Set line finding parameters
+        self.min_degree = 45
+        self.max_degree = 135
+        self.threshold = 1000 #2000
+        self.theta_margin = 25 #100 #25
+        self.rho_margin = 25 #100 #25
+        self.x_stride = 2
+        self.y_stride = 8
+
+
         # Delta value in pixels for x/y for tracking new lines
-        self.line_id_max_delta = 10
+        self.line_id_max_delta = 20
+
+        # Max frames without a line before line history is cleared
+        self.frames_before_line_purge = 200
 
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
@@ -36,14 +49,6 @@ class VeloTimer():
         # Initialize image buffer
         self.img = sensor.snapshot()
 
-        # Set line finding parameters
-        self.min_degree = 45
-        self.max_degree = 135
-        self.threshold = 2000
-        self.theta_margin = 100 #25
-        self.rho_margin = 100 #25
-
-
         # Schedule async LCD shield updates
         micropython.alloc_emergency_exception_buf(100) # Debugging only
         self.render_ref = self.render # Allocation occurs here
@@ -57,8 +62,8 @@ class VeloTimer():
         self.line_draw_color = (255, 0, 0)
         self._fps = None
 
-        # Store last known lines
-        self._lines = self.find_lines()
+        # Store known lines and set lifetime in frames
+        self._known_lines = []
 
 
     def __del__(self):
@@ -96,7 +101,7 @@ class VeloTimer():
             self.draw_exposure(img)
             #print(self._fps, self.get_exposure_lines())
         if self.draw_lines:
-            for line in self._lines:
+            for iterations, line in self._known_lines:
                 img.draw_line(line.line(), color = self.line_draw_color)
         lcd.display(img)
 
@@ -138,36 +143,57 @@ class VeloTimer():
         """
 
         img = img or self.img
-        all_lines = img.find_lines(threshold=self.threshold,
-                               x_stride=8,
-                               y_stride=4,
-                               theta_margin=self.theta_margin,
-                               rho_margin=self.rho_margin)
-
-        filtered_lines = []
-        for line in all_lines:
+        lines_present = []
+        for line in img.find_lines(threshold=self.threshold,
+                                   x_stride=self.x_stride,
+                                   y_stride=self.y_stride,
+                                   theta_margin=self.theta_margin,
+                                   rho_margin=self.rho_margin):
+            # Skip to next line if line is below/above limits
             if self.min_degree and line.theta() < self.min_degree:
                 continue
             if self.max_degree and line.theta() > self.max_degree:
                 continue
-            filtered_lines.append(line)
+            lines_present.append(line)
             self.red_led.toggle()
 
-            for existing_line in self._lines:
+            # Check if line was found in previous iteration
+            for iteration, existing_line in self._known_lines:
                delta_array = ulab.array(line.line()) - ulab.array(existing_line.line())
+               # Compare each coordinate, x1,x2,y1,y2
                for delta in delta_array:
                   if abs(delta) > self.line_id_max_delta:
-                      print("New line")
+                      # Coordinate delta too high, not a match
                       break
                else:
-                   print("Same line")
+                   # Line matches previous line, update coordinates
+                   self._known_lines.remove([iteration, existing_line])
+                   self._known_lines.append([0,line])
+                   # No need to process more lines
                    break
+
+               # Purge old line mactches
+               #self.green_led.off()
+               #print("Line removed")
+               #self._lines.remove(existing_line)
             else:
-                print("Newer Line")
+                # If no matching line was found it must be new
+                self.green_led.on()
+                print("New line found")
+                self._known_lines.append([0, line])
 
+        for place, iteration_line in enumerate(self._known_lines):
+            if iteration_line[1] not in lines_present:
+                if iteration_line[0] >= self.frames_before_line_purge:
+                     self._known_lines.remove(iteration_line)
+                     print("Purged line")
+                else:
+                    iteration_line[0] += 1
 
-        self._lines = filtered_lines
-        return filtered_lines
+        if not self._known_lines:
+            self.green_led.off()
+
+        return lines_present
 
 timer = VeloTimer(draw_stats=True, draw_lines=True)
 while(True):
