@@ -18,18 +18,19 @@ class VeloTimer():
         self.min_degree = 45
         self.max_degree = 135
         self.threshold = 1000
-        self.theta_margin = 25
-        self.rho_margin = 25
+        self.theta_margin = 35
+        self.rho_margin = 35
         self.x_stride = 2
         self.y_stride = 8
 
         # Delta value in pixels for x/y for tracking new lines
-        self.line_id_max_delta = 20
+        self.line_id_max_delta = 35
+
         # Max frames without a line before line history is cleared
         self.frames_before_line_purge = 200
 
         # Configure the imaging sensor
-        sensor.reset() Initialize the sensor
+        sensor.reset() # Initialize the sensor
         sensor.set_pixformat(sensor.GRAYSCALE) # Set pixel format
         sensor.set_framesize(sensor.QQQVGA) # Set frame size
         sensor.set_auto_exposure(True, exposure_us=5000) # Smaller means faster
@@ -48,6 +49,9 @@ class VeloTimer():
         self.tim = pyb.Timer(4)
         self.tim.init(freq=10)
         self.tim.callback(self.cb)
+
+        # Scale, sensor to screen
+        self.scale = 1.5
 
         # Show performance/debug statistics/info
         self.draw_stats = draw_stats
@@ -69,7 +73,7 @@ class VeloTimer():
     def draw_exposure(self, img=None, scale=None):
          img = img or self.img
          scale = scale or self.scale
-         img.draw_string(0,sensor.height() * scale - 10, "{:03d}el".format(self.get_exposure_lines()))
+         img.draw_string(0, int(sensor.height() * scale - 10), "{:03d}el".format(self.get_exposure_lines()))
          return img
 
     def cb(self, timer):
@@ -93,9 +97,12 @@ class VeloTimer():
             self.draw_exposure(img)
         if self.draw_lines:
             for iterations, line in self._known_lines:
-                scaled_line = ulab.array(line.line())* scale
-                print(scaled_line)
-                img.draw_line(scaled_line[0], color = self.line_draw_color)
+                scaled_line = ulab.array(line.line()) * scale
+                img.draw_line(int(scaled_line[0]),
+                              int(scaled_line[1]),
+                              int(scaled_line[2]),
+                              int(scaled_line[3]),
+                              color = self.line_draw_color)
         lcd.display(img)
 
     def get_exposure_lines(self):
