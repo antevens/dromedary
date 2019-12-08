@@ -1,12 +1,15 @@
 # Velodrome marking/line sensor
-import sensor, image, time, lcd, pyb, micropython, ulab
+import sensor, image, time, lcd, pyb, micropython, ulab, utime
 class VeloTimer():
     """
     Primary class to find lines and send signals
     See documentation for the imaging sensor:
     https://github.com/antevens/dromedary/blob/master/documents/MT9V034.pdf
     """
-    def __init__(self, draw_stats=False, draw_lines=False):
+    def __init__(self, draw_stats=False,
+                       draw_lines=False,
+                       draw_lap_times=False,
+                       draw_timer=False):
         # Setup hardware
         self.red_led = pyb.LED(1)
         self.green_led = pyb.LED(2)
@@ -18,8 +21,8 @@ class VeloTimer():
         self.min_degree = 45
         self.max_degree = 135
         self.threshold = 1300
-        self.theta_margin = 45
-        self.rho_margin = 45
+        self.theta_margin = 35
+        self.rho_margin = 35
         self.x_stride = 2
         self.y_stride = 8
 
@@ -64,20 +67,56 @@ class VeloTimer():
         # Show performance/debug statistics/info
         self.draw_stats = draw_stats
         self.draw_lines = draw_lines
+        self.draw_lap_times = draw_lap_times
+        self.draw_timer = draw_timer
         self.line_draw_color = (255, 0, 0)
         self._fps = None
         self._known_lines = []
+        self._lap_timestamp = None
+        self.lap_timestamps = []
+        self._lap_notification_timestamp = None
+        self.lap_notification_timeout = 3000
 
     def __del__(self):
         """ Clean up timers """
         self._timer.deinit()
+
+    def draw_time(self, img=None):
+        img = img or self.img
+        if self.lap_timestamps:
+            img.draw_string(10, int(sensor.height() / 2 + 10), '{:d}ms'.format(utime.ticks_diff(utime.ticks_ms(),self.lap_timestamps[-1])))
+
+    def draw_laps(self, img=None):
+        img = img or self.img
+        if len(self.lap_timestamps) > 1 and utime.ticks_diff(utime.ticks_add(self.lap_timestamps[-1], self.lap_notification_timeout), utime.ticks_ms()) >= 0:
+            lap_time = utime.ticks_diff(self.lap_timestamps[-1], self.lap_timestamps[-2])
+            hours, remainder = divmod(lap_time, 3600000)
+            minutes, remainder = divmod(remainder, 60000)
+            seconds, milliseconds = divmod(remainder, 1000)
+            lap_delta='{:03}'.format(milliseconds)
+
+            if seconds:
+               lap_delta = '{:02}.'.format(int(seconds)) + lap_delta
+               if minutes:
+                  lap_delta = '{:02}:'.format(int(minutes)) + lap_delta
+                  if hours:
+                     lap_delta = '{:02}:'.format(int(hours)) + lap_delta
+               else:
+                  lap_delta = lap_delta + 's'
+            else:
+               lap_delta = lap_delta + 'ms'
+
+            lap_delta = 'Lap: ' + lap_delta
+
+            img.draw_string(10, int(sensor.height() / 2), lap_delta)
+            return lap_time
 
     def draw_fps(self, img=None):
         """ Draws the camera FPS on an image """
         img = img or self.img
         if self._fps:
             img.draw_string(0,0, "{:03.0f}fps".format(self._fps))
-        return img
+            return self._fps
 
     def draw_exposure(self, img=None, scale=None):
         """ Draws camera exposure lines on an image """
@@ -110,6 +149,10 @@ class VeloTimer():
             img = img.copy((0,0,sensor.width(),sensor.height()),scale,scale).to_rgb565(copy=True)
             self.draw_fps(img)
             self.draw_exposure(img)
+        if self.draw_lap_times:
+            self.draw_laps(img)
+        if self.draw_timer:
+            self.draw_time(img)
         if self.draw_lines:
             for iterations, line in self._known_lines:
                 scaled_line = ulab.array(line.line()) * scale
@@ -183,7 +226,7 @@ class VeloTimer():
                 # If no matching line was found it must be new
                 self.green_led.on()
                 self.lap_pin.value(pyb.Pin.PULL_DOWN)
-                #self.lap_pin.value(pyb.Pin.PULL_NONE)
+                self.lap_timestamps.append(utime.ticks_ms())
                 print("New line found")
                 self._known_lines.append([0, line])
         for place, iteration_line in enumerate(self._known_lines):
@@ -193,12 +236,16 @@ class VeloTimer():
                      self.lap_pin.value(pyb.Pin.PULL_NONE)
                      print("Purged line")
                 else:
-                    iteration_line[0] += 1
+                     iteration_line[0] += 1
+
         if not self._known_lines:
             self.green_led.off()
         return lines_present
 
-timer = VeloTimer(draw_stats=True, draw_lines=True)
+timer = VeloTimer(draw_stats=True,
+                  draw_lines=True,
+                  draw_lap_times=True,
+                  draw_timer=True)
 while(True):
     timer.snapshot() # Take a picture
     timer.find_lines() # Process the picture
