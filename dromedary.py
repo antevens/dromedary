@@ -17,17 +17,16 @@ class VeloTimer():
         # Set line finding parameters
         self.min_degree = 45
         self.max_degree = 135
-        self.threshold = 1000
-        self.theta_margin = 35
-        self.rho_margin = 35
+        self.threshold = 1300
+        self.theta_margin = 45
+        self.rho_margin = 45
         self.x_stride = 2
         self.y_stride = 8
 
-        # Delta value in pixels for x/y for tracking new lines
-        self.line_id_max_delta = 35
-
-        # Max frames without a line before line history is cleared
-        self.frames_before_line_purge = 200
+        # Configure IO pins for signaling
+        self.action_pin = pyb.Pin('P7', pyb.Pin.OUT_OD, pyb.Pin.PULL_NONE)
+        self.page_pin = pyb.Pin('P8', pyb.Pin.OUT_OD, pyb.Pin.PULL_NONE)
+        self.lap_pin = pyb.Pin('P9', pyb.Pin.OUT_OD, pyb.Pin.PULL_NONE)
 
         # Configure the imaging sensor
         sensor.reset() # Initialize the sensor
@@ -36,19 +35,28 @@ class VeloTimer():
         sensor.set_auto_exposure(True, exposure_us=5000) # Smaller means faster
         sensor.skip_frames(time = 2000) # Wait for settings take effect
 
+        # Delta value in pixels for x/y for tracking new lines
+        self.line_id_max_delta = 40
+
+        # Max frames without a line before line history is cleared
+        self.frames_before_line_purge = 200 # should be inverse -> sensor.get_exposure_us / 25
+
         # Configure clock for tracking FPS
         self.clock = time.clock()
         # Configure the lcd screen.
         lcd.init()
         # Initialize image buffer
         self.img = sensor.snapshot()
+
+        #Allocate memory for exceptions in async/timer driven code
         micropython.alloc_emergency_exception_buf(100) # Debugging only
 
-        # Allocation for interrupt callbacks, async LCD redering
-        self.render_ref = self.render
-        self.tim = pyb.Timer(4)
-        self.tim.init(freq=10)
-        self.tim.callback(self.cb)
+        # Allocation for interrupt callbacks
+        self._timer = pyb.Timer(13)
+        self._timer.init(freq=10)
+        self._timer.callback(self._cb)
+        self._render_ref = self.render
+        self._pin_reset_ref = self.pin_reset
 
         # Scale, sensor to screen
         self.scale = 1.5
@@ -62,30 +70,37 @@ class VeloTimer():
 
     def __del__(self):
         """ Clean up timers """
-        self.tim.deinit()
+        self._timer.deinit()
 
     def draw_fps(self, img=None):
+        """ Draws the camera FPS on an image """
         img = img or self.img
         if self._fps:
             img.draw_string(0,0, "{:03.0f}fps".format(self._fps))
         return img
 
     def draw_exposure(self, img=None, scale=None):
-         img = img or self.img
-         scale = scale or self.scale
-         img.draw_string(0, int(sensor.height() * scale - 10), "{:03d}el".format(self.get_exposure_lines()))
-         return img
+        """ Draws camera exposure lines on an image """
+        img = img or self.img
+        scale = scale or self.scale
+        img.draw_string(0, int(sensor.height() * scale - 10), "{:03d}el".format(self.get_exposure_lines()))
+        return img
 
-    def cb(self, timer):
+    def _cb(self, timer):
         """ Callback event handler for rendering to the LCD async """
-        micropython.schedule(self.render_ref, timer)
+        micropython.schedule(self._render_ref, timer)
+        micropython.schedule(self._pin_reset_ref, timer)
 
     def snapshot(self):
-        """ Takes a snapshot from the image sensor """
+        """ Takes a snapshot/picture from the image sensor """
         self.clock.tick() # Update the FPS clock.
         self.img = sensor.snapshot()
         self._fps = self.clock.fps()
         return self.img
+
+    def pin_reset(self, timer):
+        """ Resets IO pins to None/Default state """
+        self.lap_pin.value(pyb.Pin.PULL_NONE)
 
     def render(self, timer, img=None, scale=None):
         """ Renders an image to the LCD shield """
@@ -167,12 +182,15 @@ class VeloTimer():
             else:
                 # If no matching line was found it must be new
                 self.green_led.on()
+                self.lap_pin.value(pyb.Pin.PULL_DOWN)
+                #self.lap_pin.value(pyb.Pin.PULL_NONE)
                 print("New line found")
                 self._known_lines.append([0, line])
         for place, iteration_line in enumerate(self._known_lines):
             if iteration_line[1] not in lines_present:
                 if iteration_line[0] >= self.frames_before_line_purge:
                      self._known_lines.remove(iteration_line)
+                     self.lap_pin.value(pyb.Pin.PULL_NONE)
                      print("Purged line")
                 else:
                     iteration_line[0] += 1
