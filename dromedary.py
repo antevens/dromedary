@@ -9,7 +9,12 @@ class VeloTimer():
     def __init__(self, draw_stats=False,
                        draw_lines=False,
                        draw_lap_times=False,
-                       draw_timer=False):
+                       draw_timer=False,
+                       draw_line_stats=False,
+                       save_first_frame=False,
+                       flip_text=False,
+                       mirror_text=False,
+                       rotate_text=0):
         # Setup hardware
         self.red_led = pyb.LED(1)
         self.green_led = pyb.LED(2)
@@ -17,12 +22,16 @@ class VeloTimer():
         self.infra_led = pyb.LED(4)
         self.usb_serial = pyb.USB_VCP() # Serial Port
 
+        # Auto gain and white balance settings
+        #sensor.set_auto_gain(False) # must be turned off for color tracking
+        #sensor.set_auto_whitebal(False) # must be turned off for color tracking
+
         # Set line finding parameters
         self.min_degree = 45
         self.max_degree = 135
-        self.threshold = 1300
-        self.theta_margin = 35
-        self.rho_margin = 35
+        self.threshold = 1000
+        self.theta_margin = 25 # Max angle of lines to be merged and considered one
+        self.rho_margin = 25 # Max spacing between lines along the rho axis
         self.x_stride = 2
         self.y_stride = 8
 
@@ -69,22 +78,30 @@ class VeloTimer():
         self.draw_lines = draw_lines
         self.draw_lap_times = draw_lap_times
         self.draw_timer = draw_timer
+        self.draw_line_stats = draw_line_stats
         self.line_draw_color = (255, 0, 0)
         self._fps = None
         self._known_lines = []
         self._lap_timestamp = None
         self.lap_timestamps = []
         self._lap_notification_timestamp = None
-        self.lap_notification_timeout = 3000
+        self.lap_notification_timeout = 5000
+        self.save_first_frame = save_first_frame
+        self.flip_text=flip_text
+        self.mirror_text=mirror_text
+        self.rotate_text=rotate_text
 
     def __del__(self):
         """ Clean up timers """
         self._timer.deinit()
 
+    def draw_line_stat(self, img=None):
+        img.draw_string(10,20, 'Laps: {:d}'.format(len(self.lap_timestamps)), string_vflip=self.flip_text, string_hmirror=self.mirror_text, string_rotation=self.rotate_text)
+
     def draw_time(self, img=None):
         img = img or self.img
         if self.lap_timestamps:
-            img.draw_string(10, int(sensor.height() / 2 + 10), '{:d}ms'.format(utime.ticks_diff(utime.ticks_ms(),self.lap_timestamps[-1])))
+            img.draw_string(10, int(sensor.height() / 2 + 10), '{:d}ms'.format(utime.ticks_diff(utime.ticks_ms(),self.lap_timestamps[-1])), string_vflip=self.flip_text, string_hmirror=self.mirror_text,string_rotation=self.rotate_text)
 
     def draw_laps(self, img=None):
         img = img or self.img
@@ -108,21 +125,21 @@ class VeloTimer():
 
             lap_delta = 'Lap: ' + lap_delta
 
-            img.draw_string(10, int(sensor.height() / 2), lap_delta)
+            img.draw_string(10, int(sensor.height() / 2), lap_delta, string_vflip=self.flip_text, string_hmirror=self.mirror_text, string_rotation=self.rotate_text)
             return lap_time
 
     def draw_fps(self, img=None):
         """ Draws the camera FPS on an image """
         img = img or self.img
         if self._fps:
-            img.draw_string(0,0, "{:03.0f}fps".format(self._fps))
+            img.draw_string(0,0, "{:03.0f}fps".format(self._fps), string_vflip=self.flip_text, string_hmirror=self.mirror_text, string_rotation=self.rotate_text)
             return self._fps
 
     def draw_exposure(self, img=None, scale=None):
         """ Draws camera exposure lines on an image """
         img = img or self.img
         scale = scale or self.scale
-        img.draw_string(0, int(sensor.height() * scale - 10), "{:03d}el".format(self.get_exposure_lines()))
+        img.draw_string(0, int(sensor.height() * scale - 10), "{:03d}el".format(self.get_exposure_lines()), string_vflip=self.flip_text, string_hmirror=self.mirror_text, string_rotation=self.rotate_text)
         return img
 
     def _cb(self, timer):
@@ -149,6 +166,8 @@ class VeloTimer():
             img = img.copy((0,0,sensor.width(),sensor.height()),scale,scale).to_rgb565(copy=True)
             self.draw_fps(img)
             self.draw_exposure(img)
+        if self.draw_line_stats:
+            self.draw_line_stat(img)
         if self.draw_lap_times:
             self.draw_laps(img)
         if self.draw_timer:
@@ -179,7 +198,8 @@ class VeloTimer():
 
     def find_lines(self, img=None, min_degree=None, max_degree=None):
         """
-        Finds lines in images
+        Finds lines in images using a Hough transform
+
         `threshold` controls how many lines in the image are found. Only lines with
         edge difference magnitude sums greater than `threshold` are detected...
         More about `threshold` - each pixel in the image contributes a magnitude value
@@ -229,6 +249,12 @@ class VeloTimer():
                 self.lap_timestamps.append(utime.ticks_ms())
                 print("New line found")
                 self._known_lines.append([0, line])
+                if self.save_first_frame:
+                    img.save(str(utime.ticks_ms()) + ".jpg")
+                if len(lines_present) > 1:
+                   pass
+                   # add smart code to detect rising/falling
+                   #CREATE non square bounding box and get average colour, see about changing sensor mode
         for place, iteration_line in enumerate(self._known_lines):
             if iteration_line[1] not in lines_present:
                 if iteration_line[0] >= self.frames_before_line_purge:
@@ -245,7 +271,9 @@ class VeloTimer():
 timer = VeloTimer(draw_stats=True,
                   draw_lines=True,
                   draw_lap_times=True,
-                  draw_timer=True)
+                  draw_timer=True,
+                  draw_line_stats=True,
+                  save_first_frame=True)
 while(True):
     timer.snapshot() # Take a picture
     timer.find_lines() # Process the picture
