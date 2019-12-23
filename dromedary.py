@@ -1,5 +1,5 @@
 # Velodrome marking/line sensor
-import sensor, image, time, lcd, pyb, micropython, ulab, utime
+import sensor, image, time, lcd, pyb, micropython, ulab, utime, math
 class VeloTimer():
     """
     Primary class to find lines and send signals
@@ -14,7 +14,8 @@ class VeloTimer():
                        save_first_frame=False,
                        flip_text=False,
                        mirror_text=False,
-                       rotate_text=0):
+                       rotate_text=0,
+                       flip_travel_direction=False):
         # Setup hardware
         self.red_led = pyb.LED(1)
         self.green_led = pyb.LED(2)
@@ -52,6 +53,9 @@ class VeloTimer():
 
         # Max frames without a line before line history is cleared
         self.frames_before_line_purge = 200 # should be inverse -> sensor.get_exposure_us / 25
+
+        # Default travel direction is from top to bottom
+        self.flip_travel_direction=flip_travel_direction
 
         # Configure clock for tracking FPS
         self.clock = time.clock()
@@ -228,20 +232,43 @@ class VeloTimer():
             # Filtered list of lines within theta limits
             lines_present.append(line)
 
-            # Skip to next line if line is below/above limits
+            # Compare to existing known lines
             for iteration, existing_line in self._known_lines:
-               delta_array = ulab.array(line.line()) - ulab.array(existing_line.line())
-               # Compare each coordinate, x1,x2,y1,y2
-               for delta in delta_array:
-                  if abs(delta) > self.line_id_max_delta:
-                      # Coordinate delta too high, not a match
-                      break
-               else:
-                   # Compare each coordinate, x1,x2,y1,y2
-                   self._known_lines.remove([iteration, existing_line])
-                   self._known_lines.append([0,line])
-                   # No need to process more lines
-                   break
+                delta_array = ulab.array(line.line()) - ulab.array(existing_line.line())
+                # Compare each coordinate, x1,x2,y1,y2
+                for delta in delta_array:
+                    if abs(delta) > self.line_id_max_delta:
+                        # Coordinate delta too high, not a match
+                        break
+                else:
+                    # We found a match, no need to process more lines, update location
+                    self._known_lines.remove([iteration, existing_line])
+                    self._known_lines.append([0,line])
+
+                    # Assumes travel direction is up for the sensor
+                    start_x = min(existing_line.x1(), existing_line.x2(), line.x1(), line.x2())
+                    start_y = min(existing_line.y1(), line.y2())
+                    width = max(existing_line.x1(), existing_line.x2(), line.x1(), line.x2())
+                    height = max(line.y2(), line.y1())
+                    if width and height:
+                        if not self.flip_travel_direction:
+                            bounding_box = (start_x, start_y-height, width, height)
+                        else:
+                            bounding_box = (start_x, start_y, width, height)
+                        img.draw_rectangle(bounding_box)
+                        if all(bounding_box):
+                            stats = img.copy(bounding_box).get_statistics()
+                        #print("mean", stats.mean())
+
+                        #print("median", stats.median())
+                        #print("mode", stats.mode())
+                        #print("stdev", stats.stdev())
+                            print("lq", stats.lq())
+                        #print("uq", stats.uq())
+
+                      # add smart code to detect rising/falling
+                      #CREATE non square bounding box and get average colour, see about changing sensor mode
+                    break
             else:
                 # If no matching line was found it must be new
                 self.green_led.on()
@@ -251,10 +278,7 @@ class VeloTimer():
                 self._known_lines.append([0, line])
                 if self.save_first_frame:
                     img.save(str(utime.ticks_ms()) + ".jpg")
-                if len(lines_present) > 1:
-                   pass
-                   # add smart code to detect rising/falling
-                   #CREATE non square bounding box and get average colour, see about changing sensor mode
+
         for place, iteration_line in enumerate(self._known_lines):
             if iteration_line[1] not in lines_present:
                 if iteration_line[0] >= self.frames_before_line_purge:
