@@ -30,6 +30,64 @@ UG2856KLBAG01_SPI TOLED;
 // Create Windows
 wind_info_t windowZero, windowOne, windowTwo, windowThree, windowFour, windowFive;  // Create some window objects
 
+// variables for button
+const int buttonPin = 2;
+int oldButtonState = LOW;
+
+void controlLed(BLEDevice peripheral) {
+  // connect to the peripheral
+  Serial.println("Connecting ...");
+
+  if (peripheral.connect()) {
+    Serial.println("Connected");
+  } else {
+    Serial.println("Failed to connect!");
+    return;
+  }
+
+  // discover peripheral attributes
+  Serial.println("Discovering attributes ...");
+  if (peripheral.discoverAttributes()) {
+    Serial.println("Attributes discovered");
+  } else {
+    Serial.println("Attribute discovery failed!");
+    peripheral.disconnect();
+    return;
+    }
+  // retrieve the LED characteristic
+  BLECharacteristic ledCharacteristic = peripheral.characteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
+
+  if (!ledCharacteristic) {
+    Serial.println("Peripheral does not have LED characteristic!");
+    peripheral.disconnect();
+    return;
+  } else if (!ledCharacteristic.canWrite()) {
+    Serial.println("Peripheral does not have a writable LED characteristic!");
+    peripheral.disconnect();
+    return;
+  }
+
+  while (peripheral.connected()) {
+    // while the peripheral is connection
+
+    // read the button pin
+    int buttonState = digitalRead(buttonPin);
+
+    if (oldButtonState != buttonState) {
+      // button changed
+      oldButtonState = buttonState;
+
+      if (buttonState) {
+        Serial.println("button pressed");
+      } else {
+        Serial.println("button released");
+      }
+    }
+  }
+
+  Serial.println("Peripheral disconnected");
+}
+
 void setup() {
   // Start serial communications
   Serial.begin(9600);
@@ -44,6 +102,27 @@ void setup() {
   BARO.begin();
   HTS.begin();
   APDS.begin();
+  BLE.begin();
+
+  BLEDevice peripheral = BLE.available();
+  if (peripheral) {
+    // discovered a peripheral, print out address, local name, and advertised service
+    Serial.print("Found ");
+    Serial.print(peripheral.address());
+    Serial.print(" '");
+    Serial.print(peripheral.localName());
+    Serial.print("' ");
+    Serial.print(peripheral.advertisedServiceUuid());
+    Serial.println();
+
+    // stop scanning
+    BLE.stopScan();
+
+    controlLed(peripheral);
+
+    // peripheral disconnected, start scanning again
+    BLE.scanForUuid("19b10000-e8f2-537e-4f6c-d104768a1214");
+  }
 
   APDS.setGestureSensitivity(100);
   //APDS.setLEDBoost(); 0/1/2/3
@@ -101,17 +180,16 @@ void setup() {
   //TOLED.setContrastControl(255)
   TOLED.pCurrentWindow = &windowZero;
   TOLED.println("Dromedary");
-  //TOLED.setTextCursor(0,10);
+  Serial.println(F("Dromedary"));
   TOLED.resetTextCursor();
   TOLED.pCurrentWindow = &windowOne;
   TOLED.println("starting ...");
+  Serial.println(F("starting ..."));
   TOLED.resetTextCursor();
   TOLED.pCurrentWindow = &windowTwo;
-  //TOLED.setTextCursor(0,20);
   TOLED.println("finding sensors ...");
+  Serial.println(F("finding sensors .."));
   TOLED.resetTextCursor();
-  //delay(3000);
-  //TOLED.windowSet();
   TOLED.windowClear();
 }
 
