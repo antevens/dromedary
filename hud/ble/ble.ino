@@ -12,22 +12,83 @@ const char* heart_rate_measurement_uuid="2a37";
 const char* heart_rate_location_uuid="2a38";
 
 
-// A structure to hold HR data, maximum length 6bytes
-// First bit indicates 8 vs 16 bit format
-// Heart rate is stored in first 2 bytes
+// Holds HR data, maximum length 8bytes
+// First bit indicates 8 vs 16 bit format of heart rate
+// Heart rate is stored in the next 1/2 bytes
 // Energy expended is stored in the next 2 bytes
-// RR Interval (HR Variability in the final 2 bytes
-https://stackoverflow.com/questions/33917836/bluetooth-heartrate-monitor-byte-decoding
-union hrData
-{
-  struct
-  {
-    unsigned int heartrate: 1;
-    unsigned int energy_expended: 1;
-    unsigned int rr_interval: 1;
-  } elements;
-  uint8_t bytes[6];
+// RR Interval (HR Variability) is stored in the rest of the bytes
+//https://stackoverflow.com/questions/33917836/bluetooth-heartrate-monitor-byte-decoding
+//https://stackoverflow.com/questions/17422218/bluetooth-low-energy-how-to-parse-r-r-interval-value
+class hrData  {
+  const byte long_form = 0b1;
+  const byte energy_available = 0b001;
+  const byte rr_available = 0b0001;
+  int hrDataBytes;
+  
+  public:
+  
+    union hrDataStructure
+    {
+      byte flags: 1;
+      uint8_t bytes[8]; // 8 bytes is the longest I've seen, in theory can go to 512 according to BLE standard
+      struct
+      {
+        byte flags;
+        uint8_t heartrate;
+        uint16_t energy_expended;
+        uint16_t rr_interval[];
+      } shorter_form;
+      struct
+      {
+        byte flags;
+        uint16_t heartrate;
+        uint16_t energy_expended;
+        uint16_t rr_interval[];
+      } longer_form;
+    } hrByteData;
+
+    int length() {
+      return hrDataBytes;
+    }
+  
+    void begin(byte *hrBytes, uint16_t bytes) {
+      hrDataBytes = bytes;
+      memcpy( hrByteData.bytes, hrBytes, bytes );
+    };
+
+    uint16_t heartRate()
+    {
+      if (hrByteData.flags & long_form) {
+        return hrByteData.longer_form.heartrate;
+      } else {
+        return (uint16_t)hrByteData.shorter_form.heartrate;
+      }
+    };
+    
+    uint16_t energyExpended()
+    {
+      if (hrByteData.flags & energy_available) {
+        if (hrByteData.flags & long_form) {
+          return hrByteData.longer_form.energy_expended;
+        } else {
+          return hrByteData.shorter_form.energy_expended;
+        }
+      }
+    };
+    
+    void rr_interval(byte *rrBytes)
+    {
+      if (hrByteData.flags & rr_available) {
+        if (hrByteData.flags & long_form) {
+          memcpy( hrByteData.longer_form.rr_interval, rrBytes, hrDataBytes - 5  );
+        } else {
+          memcpy( hrByteData.shorter_form.rr_interval, rrBytes, hrDataBytes - 4  );
+        }
+      }
+    };
 };
+
+
 
 void setup() {
   // Start serial communications
@@ -89,23 +150,23 @@ void setup() {
     Serial.println("Subscribed");
   }
   
-  union hrData hrStats, hrBytes;
+hrData hrStats;
   while (true) {
-      //for ( int i = 0; i < 8; i++ )
-      //{
-      // Serial.print(hrBytes[i]);
-      //}
-      //Serial.println(hrMeasurment.valueSize());
-      //Serial.println(hrMeasurment.valueLength());
-
-      //Serial.println(hrMeasurment.value());
+//Serial.println(hrMeasurment.value());
+      hrMeasurment.readValue(*hrStats.hrByteData.bytes);
+      Serial.println(hrMeasurment.valueSize());
+      Serial.println(hrMeasurment.valueLength());
       Serial.println(hrMeasurment.valueUpdated());
-      hrMeasurment.readValue(*hrBytes.bytes);
-      Serial.println(hrStats.elements.heartrate);
-      Serial.println(hrStats.elements.energy_expended);
-      Serial.println(hrStats.elements.rr_interval);
+      //hrMeasurment.readValue(*hrBytes.bytes);
+      //Serial.println(hrStats.elements.heartrate);
+      //Serial.println(hrStats.elements.energy_expended);
+      //Serial.println(hrStats.elements.rr_interval);
+      for ( int i = 0; i < 6; i++ )
+      {
+          Serial.print(hrStats.hrByteData.bytes[i]);
+      }
       Serial.println();
-      delay(500);
+      delay(5000);
   }
   //byte hrValue = 0;
   //hrMeasurment.readValue(hrValue);
