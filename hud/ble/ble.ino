@@ -150,23 +150,30 @@ void setup() {
     Serial.println("Subscribed");
   }
   
-hrData hrStats;
+  hrData hrStats;
+  //byte stuff[16];
   while (true) {
-//Serial.println(hrMeasurment.value());
-      hrMeasurment.readValue(*hrStats.hrByteData.bytes);
-      Serial.println(hrMeasurment.valueSize());
-      Serial.println(hrMeasurment.valueLength());
-      Serial.println(hrMeasurment.valueUpdated());
+      //Serial.println(hrMeasurment.value());
+      
+      //hrMeasurment.readValue(stuff, 16);
+      //Serial.println(hrMeasurment.valueSize());
+      //Serial.println(hrMeasurment.valueLength());
+      if (hrMeasurment.valueUpdated()) {
+        hrMeasurment.readValue(hrStats.hrByteData.bytes, hrMeasurment.valueLength());
+        Serial.println(hrStats.heartRate());
+      }
+      //Serial.println(hrMeasurment.valueUpdated());
       //hrMeasurment.readValue(*hrBytes.bytes);
-      //Serial.println(hrStats.elements.heartrate);
+      //Serial.println(hrStats.heartRate());
       //Serial.println(hrStats.elements.energy_expended);
       //Serial.println(hrStats.elements.rr_interval);
-      for ( int i = 0; i < 6; i++ )
-      {
-          Serial.print(hrStats.hrByteData.bytes[i]);
-      }
-      Serial.println();
-      delay(5000);
+      //for ( int i = 0; i < 16; i++ )
+      //{
+      //s  //Serial.print(stuff[i]);
+      //  Serial.print(hrStats.hrByteData.bytes[i]);
+      //}
+      //Serial.println();
+      //delay(5000);
   }
   //byte hrValue = 0;
   //hrMeasurment.readValue(hrValue);
